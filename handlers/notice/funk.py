@@ -42,11 +42,54 @@ chat_ids = [
 ]
 
 
+from telethon import TelegramClient, events
+from telethon.errors import FloodWaitError
+from utils import env
+from services.services import getNotice
+from asgiref.sync import sync_to_async
+from main.models import Notice
+from datetime import datetime
+import asyncio
 
-message_counters = {chat_id: 0 for chat_id in chat_ids}
-last_sents = {chat_id: False for chat_id in chat_ids}
+
+client = TelegramClient('seasion_9899', env.API_ID, env.API_HASH)
+
+last_notice_data = {}
+
+    
+chat_ids = [
+    -1001950144985, -1001661240991, -1001696066827, -1001368447491,
+    -1001623332436, -1001934813270, -1001698342886, -1001969097223,
+    -1002308491767, -1001900254910, -1002232778089, -1001830606441,
+    -1002161701360, -1002530161567, -1002068631562, -1002678070583,
+    -1002247652778, -1002347020143, -1002143883661, -1002172394330,
+    -1001799869165, -1002385271069, -1002469632510, -1001698975338,
+    -1002083400408, -1002089458891, -1002230508278, -1001889067613,
+    -1002341287738, -1002225373901, -1002206635995, -1002169615850,
+    -1002202717276, -1002232013574, -1002406606261, -1002387686287,
+    -1002211977483, -1002067577089, -1001927709760, -1002318451740,
+    -1001561634319, -1002237859063, -1001869944953, -1001768202236,
+    -1002219596565, -1001932433103, -1002298605058, -1002114024623,
+    -1002483533745, -1001276254263, -1002178966866, -1002215121340,
+    -1002355702294, -1002297602082, -1002228677318, -1002291327774,
+    -1002285384904, -1002225184030, -1002385819649, -1002220553035,
+    -1001570432014, -1002379133637, -1002474360096, -1001790205450,
+    -1002372123702, -1002001875045, -1002143591933, -1002376541471,
+    -1002357488084, -1002299313513, -1002360266775, -1002301648032,
+    -1002220623140, -1001503290336, -1001689353727, -1002091350845,
+    -1002459403501, -1002248065061, -1001945152898,
+    -1001801467376, -1002141143999, -1002159005012, -1002164491449,
+    -1002357301670, -1002176213545, -1002345459660, -1001661001936,
+    -1002085064659, -1002192007005, -1002247208452, -1002433091888,
+    -1001995597670, -1002375234737, -1001502734345, -1002133733161,
+    -1002367286161
+]
+
 
 last_sent_times = {chat_id: None for chat_id in chat_ids}
+
+chat_locks = {chat_id: asyncio.Lock() for chat_id in chat_ids}
+
 
 async def is_chat_accessible(chat_id):
     try:
@@ -59,13 +102,12 @@ async def is_chat_accessible(chat_id):
         return False
 
 
-
 async def send_notice(notice, chat_id):
+    formatted_description = f"{notice.descriptions}"
     try:
-        formatted_description = f"{notice.descriptions}"
         await client.send_message(chat_id, formatted_description, parse_mode='Markdown')
     except FloodWaitError as e:
-        print(f"Flood wait error: need to wait {e.seconds} seconds")
+        print(f"Flood wait error for chat {chat_id}: wait {e.seconds} seconds")
         await asyncio.sleep(e.seconds)
         # Retry after waiting
         await client.send_message(chat_id, formatted_description, parse_mode='Markdown')
@@ -75,23 +117,23 @@ async def send_notice(notice, chat_id):
             log_file.write(f"Chat ID: {chat_id} - Error sending message: {e}\n")
 
 
-
 @client.on(events.NewMessage())
 async def handler(event):
-    global last_sent_times
-    if event.chat_id in chat_ids:
-        if not event.out:
-            notices = await sync_to_async(getNotice)()
-            if notices:
-                print(f"New message received in chat {event.chat_id}.")
-                notice_list = await sync_to_async(list)(Notice.objects.all())
-                if notice_list:
-                    notice = notice_list[0]
+    if event.chat_id in chat_ids and not event.out:
+        notices = await sync_to_async(getNotice)()
+        if notices:
+            notice_list = await sync_to_async(list)(Notice.objects.all())
+            if notice_list:
+                notice = notice_list[0]
+
+                lock = chat_locks[event.chat_id]
+                async with lock:
                     current_time = datetime.now()
-                    if last_sent_times[event.chat_id] is None or (current_time - last_sent_times[event.chat_id]).total_seconds() >= notice.interval * 60:
+                    last_time = last_sent_times.get(event.chat_id)
+
+                    if last_time is None or (current_time - last_time).total_seconds() >= notice.interval * 60:
                         if await is_chat_accessible(event.chat_id):
                             await send_notice(notice, event.chat_id)
-                            last_sent_times[event.chat_id] = current_time
+                            last_sent_times[event.chat_id] = datetime.now()
                         else:
                             print(f"Cannot send message to chat {event.chat_id}, not accessible.")
-
