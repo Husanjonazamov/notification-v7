@@ -8,7 +8,7 @@ from datetime import datetime
 import asyncio
 
 
-client = TelegramClient(env.PHONE_NUMBER, env.API_ID, env.API_HASH)
+client = TelegramClient('seasion_9899', env.API_ID, env.API_HASH)
 
 last_notice_data = {}
 
