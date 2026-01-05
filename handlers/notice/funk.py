@@ -6,6 +6,7 @@ from asgiref.sync import sync_to_async
 from main.models import Notice
 from datetime import datetime
 import asyncio
+import re
 
 
 client = TelegramClient('seasion_9899', env.API_ID, env.API_HASH)
@@ -61,37 +62,50 @@ async def is_chat_accessible(chat_id):
 
 
 async def send_notice(notice, chat_id):
-    try:
-        formatted_description = f"{notice.descriptions}"
-        await client.send_message(chat_id, formatted_description, parse_mode='Markdown')
-    except FloodWaitError as e:
-        print(f"Flood wait error: need to wait {e.seconds} seconds")
-        await asyncio.sleep(e.seconds)
-        # Retry after waiting
-        await client.send_message(chat_id, formatted_description, parse_mode='Markdown')
-    except Exception as e:
-        print(f"Error sending message to {chat_id}: {e}")
-        with open("error_log.txt", "a") as log_file:
-            log_file.write(f"Chat ID: {chat_id} - Error sending message: {e}\n")
-
-
-
-@client.on(events.NewMessage())
-async def handler(event):
-    global last_sent_times
-    if event.chat_id in chat_ids:
-        if not event.out:
-            notices = await sync_to_async(getNotice)()
-            if notices:
-                print(f"New message received in chat {event.chat_id}.")
-                notice_list = await sync_to_async(list)(Notice.objects.all())
-                if notice_list:
-                    notice = notice_list[0]
-                    current_time = datetime.now()
-                    if last_sent_times[event.chat_id] is None or (current_time - last_sent_times[event.chat_id]).total_seconds() >= notice.interval * 60:
-                        if await is_chat_accessible(event.chat_id):
-                            await send_notice(notice, event.chat_id)
-                            last_sent_times[event.chat_id] = current_time
-                        else:
-                            print(f"Cannot send message to chat {event.chat_id}, not accessible.")
+    """
+    Send a notice to a chat with proper error handling and rate limit compliance.
+    """
+    formatted_description = f"{notice.descriptions}"
+    max_retries = 3
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            await client.send_message(chat_id, formatted_description, parse_mode='Markdown')
+            return  # Successfully sent
+        except FloodWaitError as e:
+            # Telegram is asking us to wait - we must respect this
+            wait_time = e.seconds
+            print(f"Flood wait error for chat {chat_id}: need to wait {wait_time} seconds")
+            await asyncio.sleep(wait_time)
+            # Retry after waiting (don't increment retry_count as this is expected behavior)
+            continue
+        except Exception as e:
+            retry_count += 1
+            error_msg = str(e)
+            print(f"Error sending message to {chat_id} (attempt {retry_count}/{max_retries}): {error_msg}")
+            
+            # Log the error
+            try:
+                with open("error_log.txt", "a") as log_file:
+                    log_file.write(f"{datetime.now().isoformat()} - Chat ID: {chat_id} - Error: {error_msg}\n")
+            except Exception as log_error:
+                print(f"Failed to write to error log: {log_error}")
+            
+            # If it's a retryable error and we haven't exceeded max retries, wait and retry
+            if retry_count < max_retries and "wait" in error_msg.lower():
+                # Extract wait time from error message if possible, otherwise wait 5 seconds
+                wait_time = 5
+                if "wait of" in error_msg and "seconds" in error_msg:
+                    try:
+                        # Try to extract the number
+                        match = re.search(r'wait of (\d+) seconds', error_msg)
+                        if match:
+                            wait_time = int(match.group(1))
+                    except:
+                        pass
+                await asyncio.sleep(wait_time)
+            else:
+                # Give up after max retries or non-retryable error
+                break
 

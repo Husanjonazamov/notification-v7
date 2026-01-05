@@ -14,7 +14,7 @@ class User(models.Model):
     
 class Notice(models.Model):
     descriptions = models.TextField()
-    interval = models.PositiveIntegerField(help_text="Interval in seconds")  
+    interval = models.PositiveIntegerField(help_text="Interval in minutes")  
     
     def __str__(self):
         return self.descriptions[:50]  
