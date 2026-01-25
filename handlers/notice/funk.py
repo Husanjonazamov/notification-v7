@@ -65,7 +65,7 @@ async def send_notice(notice, chat_id):
     """
     Send a notice to a chat with proper error handling and rate limit compliance.
     """
-    formatted_description = f"{notice.descriptions}"
+    formatted_description = f"**{notice.descriptions}**"
     max_retries = 3
     retry_count = 0
     
